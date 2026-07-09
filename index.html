@@ -150,6 +150,43 @@ let scanning = false;
 let facingMode = "environment";
 let lastScan = { code: null, time: 0 };
 
+const STATE_KEY = "lpScannerState";
+const HISTORY_KEY = "lpScannerHistory";
+
+function saveState() {
+  try {
+    localStorage.setItem(STATE_KEY, JSON.stringify({ items, order }));
+  } catch (err) { /* storage unavailable/full — current session still works in memory */ }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STATE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    items = parsed.items || {};
+    order = parsed.order || [];
+  } catch (err) { /* ignore corrupt/missing saved state */ }
+}
+
+function appendHistory(code) {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const history = raw ? JSON.parse(raw) : [];
+    history.push({ code, time: new Date().toISOString() });
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch (err) { /* storage unavailable/full — history entry skipped */ }
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
 const video = document.getElementById("video");
 const decodeCanvas = document.createElement("canvas");
 const dctx = decodeCanvas.getContext("2d", { willReadFrequently: true });
@@ -194,6 +231,7 @@ function changeQty(code, delta) {
   if (!items[code]) return;
   items[code].qty = Math.max(1, items[code].qty + delta);
   renderList();
+  saveState();
 }
 window.changeQty = changeQty;
 
@@ -210,6 +248,8 @@ function addScan(code) {
     order.push(code);
   }
   renderList();
+  saveState();
+  appendHistory(code);
   flashStatus(`Scanned: ${code} (qty ${items[code].qty})`);
 }
 
@@ -321,8 +361,8 @@ document.getElementById("manualInput").addEventListener("keydown", e => {
 });
 
 document.getElementById("clearBtn").addEventListener("click", () => {
-  if (order.length && !confirm("Clear all scanned items?")) return;
-  items = {}; order = []; renderList();
+  if (order.length && !confirm("Clear all scanned items? (Your all-time scan history is kept separately and won't be affected.)")) return;
+  items = {}; order = []; renderList(); saveState();
 });
 
 document.getElementById("exportBtn").addEventListener("click", () => {
@@ -338,10 +378,25 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   ws["!cols"] = [{ wch: 5 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Stock Count");
+
+  const history = loadHistory();
+  if (history.length) {
+    const historyRows = history.map((h, i) => ({
+      "#": i + 1,
+      "QR Code": h.code,
+      "Scanned At": new Date(h.time).toLocaleString()
+    }));
+    const wsHistory = XLSX.utils.json_to_sheet(historyRows);
+    wsHistory["!cols"] = [{ wch: 5 }, { wch: 40 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsHistory, "All-Time History");
+  }
+
   const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, "-");
   XLSX.writeFile(wb, `laundry-stock-${stamp}.xlsx`);
 });
 
+loadState();
+if (order.length) flashStatus(`Restored ${order.length} item(s) from your last session`);
 renderList();
 </script>
 </body>
