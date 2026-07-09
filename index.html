@@ -221,6 +221,28 @@ function flashStatus(msg) {
 }
 
 let starting = false;
+let barcodeDetector = null;
+
+async function initDetector() {
+  if (!("BarcodeDetector" in window)) return;
+  try {
+    const formats = await BarcodeDetector.getSupportedFormats();
+    if (formats.includes("qr_code")) {
+      barcodeDetector = new BarcodeDetector({ formats: ["qr_code"] });
+    }
+  } catch (err) {
+    barcodeDetector = null;
+  }
+}
+initDetector();
+
+function handleDetectedCode(data) {
+  const now = Date.now();
+  if (data !== lastScan.code || now - lastScan.time > 1500) {
+    lastScan = { code: data, time: now };
+    addScan(data);
+  }
+}
 
 async function startCamera() {
   if (starting) return;
@@ -248,33 +270,38 @@ async function startCamera() {
   }
 }
 
-function scanLoop() {
+let detecting = false;
+
+async function scanLoop() {
   if (!scanning) return;
-  try {
-    if (typeof jsQR !== "function") {
-      throw new Error("QR library failed to load — reload the page");
-    }
-    if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
-      const scale = Math.min(1, MAX_DECODE_DIM / Math.max(video.videoWidth, video.videoHeight));
-      const w = Math.round(video.videoWidth * scale);
-      const h = Math.round(video.videoHeight * scale);
-      if (decodeCanvas.width !== w || decodeCanvas.height !== h) {
-        decodeCanvas.width = w;
-        decodeCanvas.height = h;
-      }
-      dctx.drawImage(video, 0, 0, w, h);
-      const imgData = dctx.getImageData(0, 0, w, h);
-      const code = jsQR(imgData.data, w, h, { inversionAttempts: "dontInvert" });
-      if (code && code.data) {
-        const now = Date.now();
-        if (code.data !== lastScan.code || now - lastScan.time > 1500) {
-          lastScan = { code: code.data, time: now };
-          addScan(code.data);
+  if (!detecting) {
+    detecting = true;
+    try {
+      if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
+        if (barcodeDetector) {
+          const codes = await barcodeDetector.detect(video);
+          if (codes.length > 0) handleDetectedCode(codes[0].rawValue);
+        } else {
+          if (typeof jsQR !== "function") {
+            throw new Error("QR library failed to load — reload the page");
+          }
+          const scale = Math.min(1, MAX_DECODE_DIM / Math.max(video.videoWidth, video.videoHeight));
+          const w = Math.round(video.videoWidth * scale);
+          const h = Math.round(video.videoHeight * scale);
+          if (decodeCanvas.width !== w || decodeCanvas.height !== h) {
+            decodeCanvas.width = w;
+            decodeCanvas.height = h;
+          }
+          dctx.drawImage(video, 0, 0, w, h);
+          const imgData = dctx.getImageData(0, 0, w, h);
+          const code = jsQR(imgData.data, w, h, { inversionAttempts: "dontInvert" });
+          if (code && code.data) handleDetectedCode(code.data);
         }
       }
+    } catch (err) {
+      statusLine.textContent = "Scan error: " + err.message;
     }
-  } catch (err) {
-    statusLine.textContent = "Scan error: " + err.message;
+    detecting = false;
   }
   requestAnimationFrame(scanLoop);
 }
