@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Laundry Stock Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #ECF0F1;
+    color: #2C3E50;
+  }
+  .topbar {
+    background: #2C3E50;
+    color: #ECF0F1;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .topbar h1 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.3px;
+  }
+  .topbar .badge {
+    font-family: "Courier New", monospace;
+    font-size: 12px;
+    background: #16A085;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+  .scan-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    background: #000;
+    aspect-ratio: 4/3;
+    overflow: hidden;
+  }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  canvas#overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;
+  }
+  .scan-frame {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 62%; height: 62%; border: 3px solid #16A085; border-radius: 12px;
+    box-shadow: 0 0 0 999px rgba(0,0,0,0.35);
+  }
+  .status-line {
+    text-align: center; padding: 8px 12px; font-size: 13px;
+    background: #34495E; color: #BDC3C7; min-height: 34px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .status-line.flash { background: #16A085; color: #fff; }
+  .controls {
+    display: flex; gap: 8px; padding: 10px 16px; max-width: 480px; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; font-size: 14px; font-weight: 600; border: none;
+    border-radius: 8px; padding: 10px 14px; cursor: pointer;
+  }
+  .btn-primary { background: #16A085; color: #fff; flex: 1; }
+  .btn-secondary { background: #D5DBDB; color: #2C3E50; }
+  .btn-danger { background: #E74C3C; color: #fff; }
+  .stats-bar {
+    display: flex; gap: 10px; padding: 0 16px 10px; max-width: 480px; margin: 0 auto;
+  }
+  .stat-card {
+    flex: 1; background: #fff; border-radius: 8px; padding: 10px 12px;
+    border: 1px solid #D5DBDB; text-align: center;
+  }
+  .stat-card .num { font-size: 20px; font-weight: 700; color: #2C3E50; }
+  .stat-card .lbl { font-size: 11px; color: #7F8C8D; text-transform: uppercase; letter-spacing: 0.5px; }
+  .list-wrap { padding: 4px 16px 100px; max-width: 480px; margin: 0 auto; }
+  .list-header { font-size: 12px; color: #7F8C8D; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 6px; }
+  .ticket {
+    background: #fff; border: 1px solid #D5DBDB; border-radius: 8px; margin-bottom: 8px;
+    padding: 10px 12px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .ticket .code {
+    font-family: "Courier New", monospace; font-size: 13px; font-weight: 700; color: #2C3E50;
+    word-break: break-all; margin-right: 8px;
+  }
+  .ticket .meta { font-size: 11px; color: #95A5A6; margin-top: 3px; }
+  .ticket .qty-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .qty-btn {
+    width: 26px; height: 26px; border-radius: 6px; background: #ECF0F1; color: #2C3E50;
+    font-size: 16px; padding: 0; line-height: 1;
+  }
+  .qty { font-size: 16px; font-weight: 700; min-width: 22px; text-align: center; }
+  .empty-state { text-align: center; color: #95A5A6; font-size: 13px; padding: 30px 10px; }
+  .manual-row { display: flex; gap: 8px; padding: 0 16px 10px; max-width: 480px; margin: 0 auto; }
+  .manual-row input {
+    flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #D5DBDB; font-size: 14px;
+  }
+  .footer-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #D5DBDB;
+    padding: 10px 16px; display: flex; gap: 8px; max-width: 480px; margin: 0 auto;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Laundry stock scanner</h1>
+  <span class="badge" id="itemCount">0 items</span>
+</div>
+
+<div class="scan-wrap">
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="overlay"></canvas>
+  <div class="scan-frame"></div>
+</div>
+
+<div class="status-line" id="statusLine">Point the camera at a QR code</div>
+
+<div class="controls">
+  <button class="btn-primary" id="startBtn">Start camera</button>
+  <button class="btn-secondary" id="switchBtn" style="display:none;">Flip</button>
+</div>
+
+<div class="manual-row">
+  <input type="text" id="manualInput" placeholder="Or type a code manually">
+  <button class="btn-secondary" id="manualAdd">Add</button>
+</div>
+
+<div class="stats-bar">
+  <div class="stat-card"><div class="num" id="statUnique">0</div><div class="lbl">Unique codes</div></div>
+  <div class="stat-card"><div class="num" id="statTotal">0</div><div class="lbl">Total quantity</div></div>
+</div>
+
+<div class="list-wrap">
+  <div class="list-header">Scanned log</div>
+  <div id="listBody"></div>
+</div>
+
+<div class="footer-bar">
+  <button class="btn-danger" id="clearBtn">Clear all</button>
+  <button class="btn-primary" id="exportBtn">Download Excel</button>
+</div>
+
+<script>
+let items = {};
+let order = [];
+let stream = null;
+let scanning = false;
+let facingMode = "environment";
+let lastScan = { code: null, time: 0 };
+
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const octx = overlay.getContext("2d");
+const statusLine = document.getElementById("statusLine");
+const startBtn = document.getElementById("startBtn");
+const switchBtn = document.getElementById("switchBtn");
+const listBody = document.getElementById("listBody");
+
+function renderList() {
+  document.getElementById("itemCount").textContent = order.length + " items";
+  document.getElementById("statUnique").textContent = order.length;
+  const total = order.reduce((s, c) => s + items[c].qty, 0);
+  document.getElementById("statTotal").textContent = total;
+
+  if (order.length === 0) {
+    listBody.innerHTML = '<div class="empty-state">Nothing scanned yet</div>';
+    return;
+  }
+  listBody.innerHTML = order.slice().reverse().map(code => {
+    const it = items[code];
+    return `<div class="ticket">
+      <div>
+        <div class="code">${escapeHtml(code)}</div>
+        <div class="meta">first: ${it.first} · last: ${it.last}</div>
+      </div>
+      <div class="qty-wrap">
+        <button class="qty-btn" onclick="changeQty('${escapeAttr(code)}', -1)">-</button>
+        <div class="qty">${it.qty}</div>
+        <button class="qty-btn" onclick="changeQty('${escapeAttr(code)}', 1)">+</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function escapeAttr(s) { return s.replace(/'/g, "\\'"); }
+
+function changeQty(code, delta) {
+  if (!items[code]) return;
+  items[code].qty = Math.max(1, items[code].qty + delta);
+  renderList();
+}
+window.changeQty = changeQty;
+
+function addScan(code) {
+  code = code.trim();
+  if (!code) return;
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString();
+  if (items[code]) {
+    items[code].qty += 1;
+    items[code].last = timeStr;
+  } else {
+    items[code] = { qty: 1, first: timeStr, last: timeStr };
+    order.push(code);
+  }
+  renderList();
+  flashStatus(`Scanned: ${code} (qty ${items[code].qty})`);
+}
+
+function flashStatus(msg) {
+  statusLine.textContent = msg;
+  statusLine.classList.add("flash");
+  setTimeout(() => statusLine.classList.remove("flash"), 350);
+  if (navigator.vibrate) navigator.vibrate(60);
+}
+
+async function startCamera() {
+  try {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = stream;
+    await video.play();
+    scanning = true;
+    switchBtn.style.display = "inline-block";
+    startBtn.textContent = "Restart camera";
+    statusLine.textContent = "Scanning… hold a QR code in frame";
+    requestAnimationFrame(scanLoop);
+  } catch (err) {
+    statusLine.textContent = "Camera error: " + err.message + " — you can still use manual entry below.";
+  }
+}
+
+function scanLoop() {
+  if (!scanning) return;
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+    octx.drawImage(video, 0, 0, overlay.width, overlay.height);
+    const imgData = octx.getImageData(0, 0, overlay.width, overlay.height);
+    const code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    if (code && code.data) {
+      const now = Date.now();
+      if (code.data !== lastScan.code || now - lastScan.time > 1500) {
+        lastScan = { code: code.data, time: now };
+        addScan(code.data);
+      }
+    }
+  }
+  requestAnimationFrame(scanLoop);
+}
+
+startBtn.addEventListener("click", startCamera);
+switchBtn.addEventListener("click", () => {
+  facingMode = facingMode === "environment" ? "user" : "environment";
+  startCamera();
+});
+
+document.getElementById("manualAdd").addEventListener("click", () => {
+  const inp = document.getElementById("manualInput");
+  if (inp.value.trim()) { addScan(inp.value); inp.value = ""; }
+});
+document.getElementById("manualInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("manualAdd").click();
+});
+
+document.getElementById("clearBtn").addEventListener("click", () => {
+  if (order.length && !confirm("Clear all scanned items?")) return;
+  items = {}; order = []; renderList();
+});
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+  if (order.length === 0) { flashStatus("Nothing to export yet"); return; }
+  const rows = order.map((code, i) => ({
+    "#": i + 1,
+    "QR Code": code,
+    "Quantity": items[code].qty,
+    "First Scanned": items[code].first,
+    "Last Scanned": items[code].last
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws["!cols"] = [{ wch: 5 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Stock Count");
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, "-");
+  XLSX.writeFile(wb, `laundry-stock-${stamp}.xlsx`);
+});
+
+renderList();
+</script>
+</body>
+</html>
