@@ -7,6 +7,39 @@
 <link rel="icon" type="image/jpeg" href="logo.jpg">
 <script src="jsQR.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+  import {
+    getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+  import {
+    getAuth, signInAnonymously, onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBwQ3Rxu3tWHc32frFnxEU2cacO-UBD3mY",
+    authDomain: "lpstock-64b30.firebaseapp.com",
+    projectId: "lpstock-64b30",
+    storageBucket: "lpstock-64b30.firebasestorage.app",
+    messagingSenderId: "211015665227",
+    appId: "1:211015665227:web:7c31ee21dee2c580916fce",
+    measurementId: "G-RYCTDZ2Y5L"
+  };
+
+  const firebaseApp = initializeApp(firebaseConfig);
+  window.db = getFirestore(firebaseApp);
+  window.firestoreFns = { collection, addDoc, getDocs, query, orderBy, serverTimestamp };
+
+  const auth = getAuth(firebaseApp);
+  window.firebaseReady = new Promise((resolve) => {
+    onAuthStateChanged(auth, (user) => { if (user) resolve(); });
+    signInAnonymously(auth).catch((err) => {
+      console.error("Firebase sign-in failed — cloud sync will be unavailable:", err);
+      resolve();
+    });
+  });
+</script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -260,6 +293,40 @@ function saveBatch(batch) {
   } catch (err) { /* storage unavailable/full — batch not saved */ }
 }
 
+async function saveBatchToCloud(batch) {
+  try {
+    await window.firebaseReady;
+    if (!window.db) return;
+    const { collection, addDoc, serverTimestamp } = window.firestoreFns;
+    await addDoc(collection(window.db, "batches"), { ...batch, syncedAt: serverTimestamp() });
+  } catch (err) {
+    console.error("Cloud sync failed, batch is still saved on this device:", err);
+  }
+}
+
+async function loadCloudBatches() {
+  try {
+    await window.firebaseReady;
+    if (!window.db) return [];
+    const { collection, getDocs, query, orderBy } = window.firestoreFns;
+    const q = query(collection(window.db, "batches"), orderBy("endTime"));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+  } catch (err) {
+    console.error("Failed to load cloud batches:", err);
+    return [];
+  }
+}
+
+async function getAllBatches() {
+  const localBatches = loadBatches();
+  const cloudBatches = await loadCloudBatches();
+  const localIds = new Set(localBatches.map(b => String(b.id)));
+  const merged = localBatches.concat(cloudBatches.filter(b => !localIds.has(String(b.id))));
+  merged.sort((a, b) => new Date(a.endTime) - new Date(b.endTime));
+  return merged;
+}
+
 const video = document.getElementById("video");
 const decodeCanvas = document.createElement("canvas");
 const dctx = decodeCanvas.getContext("2d", { willReadFrequently: true });
@@ -294,18 +361,23 @@ function renderList() {
         <div class="meta">first: ${it.first} · last: ${it.last}</div>
       </div>
       <div class="qty-wrap">
-        <button class="qty-btn" onclick="changeQty('${escapeAttr(code)}', -1)">-</button>
+        <button class="qty-btn" data-code="${escapeHtml(code)}" data-delta="-1">-</button>
         <div class="qty">${it.qty}</div>
-        <button class="qty-btn" onclick="changeQty('${escapeAttr(code)}', 1)">+</button>
+        <button class="qty-btn" data-code="${escapeHtml(code)}" data-delta="1">+</button>
       </div>
     </div>`;
   }).join("");
 }
 
+listBody.addEventListener("click", (e) => {
+  const btn = e.target.closest(".qty-btn");
+  if (!btn) return;
+  changeQty(btn.dataset.code, Number(btn.dataset.delta));
+});
+
 function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
-function escapeAttr(s) { return String(s).replace(/'/g, "\\'"); }
 
 function changeQty(code, delta) {
   if (!items[code]) return;
@@ -313,7 +385,6 @@ function changeQty(code, delta) {
   renderList();
   saveState();
 }
-window.changeQty = changeQty;
 
 function addScan(code) {
   code = code.trim();
@@ -451,16 +522,20 @@ const historyList = document.getElementById("historyList");
 const historyTitle = document.getElementById("historyTitle");
 const closeHistoryBtn = document.getElementById("closeHistoryBtn");
 
-function renderBatchList() {
+let batchListCache = [];
+
+async function renderBatchList() {
   historyTitle.textContent = "Batch history";
-  const batches = loadBatches();
+  historyList.innerHTML = '<div class="empty-state">Loading…</div>';
+  const batches = await getAllBatches();
+  batchListCache = batches;
   if (batches.length === 0) {
     historyList.innerHTML = '<div class="empty-state">No finished batches yet</div>';
     return;
   }
   historyList.innerHTML = batches.slice().reverse().map(b => {
     const qty = b.order.reduce((s, c) => s + b.items[c].qty, 0);
-    return `<div class="batch-card" onclick="viewBatch('${escapeAttr(b.id)}')">
+    return `<div class="batch-card" data-batch-id="${escapeHtml(String(b.id))}">
       <div class="batch-loc">${escapeHtml(b.location)}</div>
       <div class="batch-meta">${escapeHtml(b.user)} · ${escapeHtml(new Date(b.endTime).toLocaleString())}</div>
       <div class="batch-count">${b.order.length} code(s) · ${qty} total qty</div>
@@ -469,8 +544,7 @@ function renderBatchList() {
 }
 
 function viewBatch(batchId) {
-  const batches = loadBatches();
-  const batch = batches.find(b => String(b.id) === String(batchId));
+  const batch = batchListCache.find(b => String(b.id) === String(batchId));
   if (!batch) return;
   historyTitle.textContent = batch.location;
   const rows = batch.order.map(code => {
@@ -485,19 +559,25 @@ function viewBatch(batchId) {
   }).join("");
   historyList.innerHTML = `
     <div class="back-row" style="display:flex; gap:8px;">
-      <button class="btn-secondary" onclick="renderBatchList()">&larr; All batches</button>
-      <button class="btn-primary" style="flex:1;" onclick="downloadBatchExcel('${escapeAttr(batch.id)}')">Download Excel</button>
+      <button class="btn-secondary" data-action="back">&larr; All batches</button>
+      <button class="btn-primary" style="flex:1;" data-action="download-batch" data-batch-id="${escapeHtml(String(batch.id))}">Download Excel</button>
     </div>
     <div class="list-header">${escapeHtml(batch.user)} · ${escapeHtml(new Date(batch.endTime).toLocaleString())}</div>
     ${rows}
   `;
 }
-window.viewBatch = viewBatch;
-window.renderBatchList = renderBatchList;
+
+historyList.addEventListener("click", (e) => {
+  const card = e.target.closest(".batch-card");
+  if (card) { viewBatch(card.dataset.batchId); return; }
+  const action = e.target.closest("[data-action]");
+  if (!action) return;
+  if (action.dataset.action === "back") renderBatchList();
+  else if (action.dataset.action === "download-batch") downloadBatchExcel(action.dataset.batchId);
+});
 
 function downloadBatchExcel(batchId) {
-  const batches = loadBatches();
-  const batch = batches.find(b => String(b.id) === String(batchId));
+  const batch = batchListCache.find(b => String(b.id) === String(batchId));
   if (!batch) return;
   const rows = batch.order.map((code, i) => ({
     "#": i + 1,
@@ -516,11 +596,10 @@ function downloadBatchExcel(batchId) {
   const safeLoc = batch.location.replace(/[^a-z0-9]+/gi, "-").slice(0, 30);
   XLSX.writeFile(wb, `laundry-batch-${safeLoc}-${stamp}.xlsx`);
 }
-window.downloadBatchExcel = downloadBatchExcel;
 
 historyBtn.addEventListener("click", () => {
-  renderBatchList();
   historyModal.style.display = "flex";
+  renderBatchList();
 });
 closeHistoryBtn.addEventListener("click", () => {
   historyModal.style.display = "none";
@@ -538,6 +617,7 @@ document.getElementById("clearBtn").addEventListener("click", () => {
     items, order
   };
   saveBatch(batch);
+  saveBatchToCloud(batch);
   try {
     localStorage.setItem(LAST_LOCATION_KEY, batch.location);
     localStorage.setItem(LAST_USER_KEY, batch.user);
@@ -549,7 +629,7 @@ document.getElementById("clearBtn").addEventListener("click", () => {
   flashStatus("Batch saved to history");
 });
 
-document.getElementById("exportBtn").addEventListener("click", () => {
+document.getElementById("exportBtn").addEventListener("click", async () => {
   if (order.length === 0) { flashStatus("Nothing to export yet"); return; }
   const currentLocation = batchLocation || locationInput.value.trim() || "(no location)";
   const currentUser = batchUser || userInput.value.trim() || "(unknown)";
@@ -567,7 +647,7 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Current Batch");
 
-  const batches = loadBatches();
+  const batches = await getAllBatches();
   if (batches.length) {
     const batchRows = [];
     batches.forEach((b, bi) => {
