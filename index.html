@@ -223,7 +223,12 @@ function flashStatus(msg) {
   if (navigator.vibrate) navigator.vibrate(60);
 }
 
+let starting = false;
+
 async function startCamera() {
+  if (starting) return;
+  starting = true;
+  startBtn.disabled = true;
   try {
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = await navigator.mediaDevices.getUserMedia({
@@ -231,13 +236,18 @@ async function startCamera() {
     });
     video.srcObject = stream;
     await video.play();
-    scanning = true;
     switchBtn.style.display = "inline-block";
     startBtn.textContent = "Restart camera";
     statusLine.textContent = "Scanning… hold a QR code in frame";
-    requestAnimationFrame(scanLoop);
+    if (!scanning) {
+      scanning = true;
+      requestAnimationFrame(scanLoop);
+    }
   } catch (err) {
     statusLine.textContent = "Camera error: " + err.message + " — you can still use manual entry below.";
+  } finally {
+    starting = false;
+    startBtn.disabled = false;
   }
 }
 
