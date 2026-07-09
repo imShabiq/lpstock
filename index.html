@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Laundry Stock Scanner</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="jsQR.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   * { box-sizing: border-box; }
@@ -250,24 +250,31 @@ async function startCamera() {
 
 function scanLoop() {
   if (!scanning) return;
-  if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
-    const scale = Math.min(1, MAX_DECODE_DIM / Math.max(video.videoWidth, video.videoHeight));
-    const w = Math.round(video.videoWidth * scale);
-    const h = Math.round(video.videoHeight * scale);
-    if (decodeCanvas.width !== w || decodeCanvas.height !== h) {
-      decodeCanvas.width = w;
-      decodeCanvas.height = h;
+  try {
+    if (typeof jsQR !== "function") {
+      throw new Error("QR library failed to load — reload the page");
     }
-    dctx.drawImage(video, 0, 0, w, h);
-    const imgData = dctx.getImageData(0, 0, w, h);
-    const code = jsQR(imgData.data, w, h, { inversionAttempts: "dontInvert" });
-    if (code && code.data) {
-      const now = Date.now();
-      if (code.data !== lastScan.code || now - lastScan.time > 1500) {
-        lastScan = { code: code.data, time: now };
-        addScan(code.data);
+    if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
+      const scale = Math.min(1, MAX_DECODE_DIM / Math.max(video.videoWidth, video.videoHeight));
+      const w = Math.round(video.videoWidth * scale);
+      const h = Math.round(video.videoHeight * scale);
+      if (decodeCanvas.width !== w || decodeCanvas.height !== h) {
+        decodeCanvas.width = w;
+        decodeCanvas.height = h;
+      }
+      dctx.drawImage(video, 0, 0, w, h);
+      const imgData = dctx.getImageData(0, 0, w, h);
+      const code = jsQR(imgData.data, w, h, { inversionAttempts: "dontInvert" });
+      if (code && code.data) {
+        const now = Date.now();
+        if (code.data !== lastScan.code || now - lastScan.time > 1500) {
+          lastScan = { code: code.data, time: now };
+          addScan(code.data);
+        }
       }
     }
+  } catch (err) {
+    statusLine.textContent = "Scan error: " + err.message;
   }
   requestAnimationFrame(scanLoop);
 }
