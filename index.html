@@ -464,13 +464,39 @@ function viewBatch(batchId) {
     </div>`;
   }).join("");
   historyList.innerHTML = `
-    <div class="back-row"><button class="btn-secondary" onclick="renderBatchList()">&larr; All batches</button></div>
+    <div class="back-row" style="display:flex; gap:8px;">
+      <button class="btn-secondary" onclick="renderBatchList()">&larr; All batches</button>
+      <button class="btn-primary" style="flex:1;" onclick="downloadBatchExcel('${escapeAttr(batch.id)}')">Download Excel</button>
+    </div>
     <div class="list-header">${escapeHtml(batch.user)} · ${escapeHtml(new Date(batch.endTime).toLocaleString())}</div>
     ${rows}
   `;
 }
 window.viewBatch = viewBatch;
 window.renderBatchList = renderBatchList;
+
+function downloadBatchExcel(batchId) {
+  const batches = loadBatches();
+  const batch = batches.find(b => String(b.id) === String(batchId));
+  if (!batch) return;
+  const rows = batch.order.map((code, i) => ({
+    "#": i + 1,
+    "Location": batch.location,
+    "Scanned By": batch.user,
+    "QR Code": code,
+    "Quantity": batch.items[code].qty,
+    "First Scanned": batch.items[code].first,
+    "Last Scanned": batch.items[code].last
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws["!cols"] = [{ wch: 5 }, { wch: 18 }, { wch: 18 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Batch");
+  const stamp = new Date(batch.endTime).toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const safeLoc = batch.location.replace(/[^a-z0-9]+/gi, "-").slice(0, 30);
+  XLSX.writeFile(wb, `laundry-batch-${safeLoc}-${stamp}.xlsx`);
+}
+window.downloadBatchExcel = downloadBatchExcel;
 
 historyBtn.addEventListener("click", () => {
   renderBatchList();
