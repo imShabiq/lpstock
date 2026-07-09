@@ -101,13 +101,30 @@
     position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #D5DBDB;
     padding: 10px 16px; display: flex; gap: 8px; max-width: 480px; margin: 0 auto;
   }
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: flex; align-items: flex-end; justify-content: center; z-index: 100;
+  }
+  .modal-panel {
+    background: #ECF0F1; width: 100%; max-width: 480px; max-height: 80vh;
+    border-radius: 12px 12px 0 0; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; background: #2C3E50; color: #fff; flex-shrink: 0;
+  }
+  .modal-header h2 { font-size: 15px; margin: 0; font-weight: 600; }
+  .modal-body { overflow-y: auto; padding: 10px 16px 16px; }
 </style>
 </head>
 <body>
 
 <div class="topbar">
   <h1>Laundry stock scanner</h1>
-  <span class="badge" id="itemCount">0 items</span>
+  <div style="display:flex; align-items:center; gap:8px;">
+    <button id="historyBtn" style="background:transparent; color:#ECF0F1; border:1px solid #7F8C8D; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px;">History</button>
+    <span class="badge" id="itemCount">0 items</span>
+  </div>
 </div>
 
 <div class="scan-wrap">
@@ -140,6 +157,16 @@
 <div class="footer-bar">
   <button class="btn-danger" id="clearBtn">Clear all</button>
   <button class="btn-primary" id="exportBtn">Download Excel</button>
+</div>
+
+<div class="modal-overlay" id="historyModal" style="display:none;">
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h2>All-time scan history</h2>
+      <button class="btn-secondary" id="closeHistoryBtn">Close</button>
+    </div>
+    <div class="modal-body" id="historyList"></div>
+  </div>
 </div>
 
 <script>
@@ -358,6 +385,36 @@ document.getElementById("manualAdd").addEventListener("click", () => {
 });
 document.getElementById("manualInput").addEventListener("keydown", e => {
   if (e.key === "Enter") document.getElementById("manualAdd").click();
+});
+
+const historyBtn = document.getElementById("historyBtn");
+const historyModal = document.getElementById("historyModal");
+const historyList = document.getElementById("historyList");
+const closeHistoryBtn = document.getElementById("closeHistoryBtn");
+
+function renderHistory() {
+  const history = loadHistory();
+  if (history.length === 0) {
+    historyList.innerHTML = '<div class="empty-state">No scans recorded yet</div>';
+    return;
+  }
+  const rows = history.slice().reverse().map(h => `
+    <div class="ticket">
+      <div>
+        <div class="code">${escapeHtml(h.code)}</div>
+        <div class="meta">${escapeHtml(new Date(h.time).toLocaleString())}</div>
+      </div>
+    </div>
+  `).join("");
+  historyList.innerHTML = `<div class="list-header">${history.length} scan(s) total</div>${rows}`;
+}
+
+historyBtn.addEventListener("click", () => {
+  renderHistory();
+  historyModal.style.display = "flex";
+});
+closeHistoryBtn.addEventListener("click", () => {
+  historyModal.style.display = "none";
 });
 
 document.getElementById("clearBtn").addEventListener("click", () => {
