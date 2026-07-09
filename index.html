@@ -97,6 +97,20 @@
   .manual-row input {
     flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #D5DBDB; font-size: 14px;
   }
+  .batch-row { display: flex; gap: 8px; padding: 10px 16px 0; max-width: 480px; margin: 0 auto; }
+  .batch-row input {
+    flex: 1; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #D5DBDB;
+    font-size: 13px; background: #fff;
+  }
+  .batch-row input:disabled { background: #ECF0F1; color: #7F8C8D; }
+  .batch-card {
+    background: #fff; border: 1px solid #D5DBDB; border-radius: 8px; margin-bottom: 8px;
+    padding: 10px 12px; cursor: pointer;
+  }
+  .batch-card .batch-loc { font-size: 14px; font-weight: 700; color: #2C3E50; }
+  .batch-card .batch-meta { font-size: 11px; color: #95A5A6; margin-top: 3px; }
+  .batch-card .batch-count { font-size: 11px; color: #16A085; font-weight: 700; margin-top: 4px; }
+  .back-row { margin-bottom: 10px; }
   .footer-bar {
     position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #D5DBDB;
     padding: 10px 16px; display: flex; gap: 8px; max-width: 480px; margin: 0 auto;
@@ -127,6 +141,11 @@
   </div>
 </div>
 
+<div class="batch-row">
+  <input type="text" id="locationInput" placeholder="Location (e.g. Branch 1)">
+  <input type="text" id="userInput" placeholder="Scanned by (your name)">
+</div>
+
 <div class="scan-wrap">
   <video id="video" playsinline autoplay muted></video>
   <div class="scan-frame"></div>
@@ -155,14 +174,14 @@
 </div>
 
 <div class="footer-bar">
-  <button class="btn-danger" id="clearBtn">Clear all</button>
+  <button class="btn-danger" id="clearBtn">Finish batch</button>
   <button class="btn-primary" id="exportBtn">Download Excel</button>
 </div>
 
 <div class="modal-overlay" id="historyModal" style="display:none;">
   <div class="modal-panel">
     <div class="modal-header">
-      <h2>All-time scan history</h2>
+      <h2 id="historyTitle">Batch history</h2>
       <button class="btn-secondary" id="closeHistoryBtn">Close</button>
     </div>
     <div class="modal-body" id="historyList"></div>
@@ -176,13 +195,18 @@ let stream = null;
 let scanning = false;
 let facingMode = "environment";
 let lastScan = { code: null, time: 0 };
+let batchLocation = null;
+let batchUser = null;
+let batchStartTime = null;
 
 const STATE_KEY = "lpScannerState";
-const HISTORY_KEY = "lpScannerHistory";
+const BATCHES_KEY = "lpScannerBatches";
+const LAST_LOCATION_KEY = "lpScannerLastLocation";
+const LAST_USER_KEY = "lpScannerLastUser";
 
 function saveState() {
   try {
-    localStorage.setItem(STATE_KEY, JSON.stringify({ items, order }));
+    localStorage.setItem(STATE_KEY, JSON.stringify({ items, order, batchLocation, batchUser, batchStartTime }));
   } catch (err) { /* storage unavailable/full — current session still works in memory */ }
 }
 
@@ -193,25 +217,27 @@ function loadState() {
     const parsed = JSON.parse(raw);
     items = parsed.items || {};
     order = parsed.order || [];
+    batchLocation = parsed.batchLocation || null;
+    batchUser = parsed.batchUser || null;
+    batchStartTime = parsed.batchStartTime || null;
   } catch (err) { /* ignore corrupt/missing saved state */ }
 }
 
-function appendHistory(code) {
+function loadBatches() {
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    const history = raw ? JSON.parse(raw) : [];
-    history.push({ code, time: new Date().toISOString() });
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-  } catch (err) { /* storage unavailable/full — history entry skipped */ }
-}
-
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
+    const raw = localStorage.getItem(BATCHES_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (err) {
     return [];
   }
+}
+
+function saveBatch(batch) {
+  try {
+    const batches = loadBatches();
+    batches.push(batch);
+    localStorage.setItem(BATCHES_KEY, JSON.stringify(batches));
+  } catch (err) { /* storage unavailable/full — batch not saved */ }
 }
 
 const video = document.getElementById("video");
@@ -222,6 +248,13 @@ const statusLine = document.getElementById("statusLine");
 const startBtn = document.getElementById("startBtn");
 const switchBtn = document.getElementById("switchBtn");
 const listBody = document.getElementById("listBody");
+const locationInput = document.getElementById("locationInput");
+const userInput = document.getElementById("userInput");
+
+function lockBatchInputs(locked) {
+  locationInput.disabled = locked;
+  userInput.disabled = locked;
+}
 
 function renderList() {
   document.getElementById("itemCount").textContent = order.length + " items";
@@ -252,7 +285,7 @@ function renderList() {
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
-function escapeAttr(s) { return s.replace(/'/g, "\\'"); }
+function escapeAttr(s) { return String(s).replace(/'/g, "\\'"); }
 
 function changeQty(code, delta) {
   if (!items[code]) return;
@@ -265,6 +298,12 @@ window.changeQty = changeQty;
 function addScan(code) {
   code = code.trim();
   if (!code) return;
+  if (order.length === 0) {
+    batchLocation = locationInput.value.trim() || "(no location)";
+    batchUser = userInput.value.trim() || "(unknown)";
+    batchStartTime = new Date().toISOString();
+    lockBatchInputs(true);
+  }
   const now = new Date();
   const timeStr = now.toLocaleTimeString();
   if (items[code]) {
@@ -276,7 +315,6 @@ function addScan(code) {
   }
   renderList();
   saveState();
-  appendHistory(code);
   flashStatus(`Scanned: ${code} (qty ${items[code].qty})`);
 }
 
@@ -390,27 +428,52 @@ document.getElementById("manualInput").addEventListener("keydown", e => {
 const historyBtn = document.getElementById("historyBtn");
 const historyModal = document.getElementById("historyModal");
 const historyList = document.getElementById("historyList");
+const historyTitle = document.getElementById("historyTitle");
 const closeHistoryBtn = document.getElementById("closeHistoryBtn");
 
-function renderHistory() {
-  const history = loadHistory();
-  if (history.length === 0) {
-    historyList.innerHTML = '<div class="empty-state">No scans recorded yet</div>';
+function renderBatchList() {
+  historyTitle.textContent = "Batch history";
+  const batches = loadBatches();
+  if (batches.length === 0) {
+    historyList.innerHTML = '<div class="empty-state">No finished batches yet</div>';
     return;
   }
-  const rows = history.slice().reverse().map(h => `
-    <div class="ticket">
-      <div>
-        <div class="code">${escapeHtml(h.code)}</div>
-        <div class="meta">${escapeHtml(new Date(h.time).toLocaleString())}</div>
-      </div>
-    </div>
-  `).join("");
-  historyList.innerHTML = `<div class="list-header">${history.length} scan(s) total</div>${rows}`;
+  historyList.innerHTML = batches.slice().reverse().map(b => {
+    const qty = b.order.reduce((s, c) => s + b.items[c].qty, 0);
+    return `<div class="batch-card" onclick="viewBatch('${escapeAttr(b.id)}')">
+      <div class="batch-loc">${escapeHtml(b.location)}</div>
+      <div class="batch-meta">${escapeHtml(b.user)} · ${escapeHtml(new Date(b.endTime).toLocaleString())}</div>
+      <div class="batch-count">${b.order.length} code(s) · ${qty} total qty</div>
+    </div>`;
+  }).join("");
 }
 
+function viewBatch(batchId) {
+  const batches = loadBatches();
+  const batch = batches.find(b => String(b.id) === String(batchId));
+  if (!batch) return;
+  historyTitle.textContent = batch.location;
+  const rows = batch.order.map(code => {
+    const it = batch.items[code];
+    return `<div class="ticket">
+      <div>
+        <div class="code">${escapeHtml(code)}</div>
+        <div class="meta">first: ${escapeHtml(it.first)} · last: ${escapeHtml(it.last)}</div>
+      </div>
+      <div class="qty">${it.qty}</div>
+    </div>`;
+  }).join("");
+  historyList.innerHTML = `
+    <div class="back-row"><button class="btn-secondary" onclick="renderBatchList()">&larr; All batches</button></div>
+    <div class="list-header">${escapeHtml(batch.user)} · ${escapeHtml(new Date(batch.endTime).toLocaleString())}</div>
+    ${rows}
+  `;
+}
+window.viewBatch = viewBatch;
+window.renderBatchList = renderBatchList;
+
 historyBtn.addEventListener("click", () => {
-  renderHistory();
+  renderBatchList();
   historyModal.style.display = "flex";
 });
 closeHistoryBtn.addEventListener("click", () => {
@@ -418,34 +481,67 @@ closeHistoryBtn.addEventListener("click", () => {
 });
 
 document.getElementById("clearBtn").addEventListener("click", () => {
-  if (order.length && !confirm("Clear all scanned items? (Your all-time scan history is kept separately and won't be affected.)")) return;
-  items = {}; order = []; renderList(); saveState();
+  if (order.length === 0) { flashStatus("Nothing scanned yet to finish"); return; }
+  if (!confirm(`Finish this batch (${order.length} code(s)) and save it to history?`)) return;
+  const batch = {
+    id: Date.now(),
+    location: batchLocation || "(no location)",
+    user: batchUser || "(unknown)",
+    startTime: batchStartTime,
+    endTime: new Date().toISOString(),
+    items, order
+  };
+  saveBatch(batch);
+  try {
+    localStorage.setItem(LAST_LOCATION_KEY, batch.location);
+    localStorage.setItem(LAST_USER_KEY, batch.user);
+  } catch (err) { /* ignore */ }
+  items = {}; order = []; batchLocation = null; batchUser = null; batchStartTime = null;
+  lockBatchInputs(false);
+  renderList();
+  saveState();
+  flashStatus("Batch saved to history");
 });
 
 document.getElementById("exportBtn").addEventListener("click", () => {
   if (order.length === 0) { flashStatus("Nothing to export yet"); return; }
+  const currentLocation = batchLocation || locationInput.value.trim() || "(no location)";
+  const currentUser = batchUser || userInput.value.trim() || "(unknown)";
   const rows = order.map((code, i) => ({
     "#": i + 1,
+    "Location": currentLocation,
+    "Scanned By": currentUser,
     "QR Code": code,
     "Quantity": items[code].qty,
     "First Scanned": items[code].first,
     "Last Scanned": items[code].last
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [{ wch: 5 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
+  ws["!cols"] = [{ wch: 5 }, { wch: 18 }, { wch: 18 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Stock Count");
+  XLSX.utils.book_append_sheet(wb, ws, "Current Batch");
 
-  const history = loadHistory();
-  if (history.length) {
-    const historyRows = history.map((h, i) => ({
-      "#": i + 1,
-      "QR Code": h.code,
-      "Scanned At": new Date(h.time).toLocaleString()
-    }));
-    const wsHistory = XLSX.utils.json_to_sheet(historyRows);
-    wsHistory["!cols"] = [{ wch: 5 }, { wch: 40 }, { wch: 20 }];
-    XLSX.utils.book_append_sheet(wb, wsHistory, "All-Time History");
+  const batches = loadBatches();
+  if (batches.length) {
+    const batchRows = [];
+    batches.forEach((b, bi) => {
+      b.order.forEach(code => {
+        const it = b.items[code];
+        batchRows.push({
+          "Batch #": bi + 1,
+          "Date": new Date(b.endTime).toLocaleString(),
+          "Location": b.location,
+          "Scanned By": b.user,
+          "QR Code": code,
+          "Quantity": it.qty,
+          "First Scanned": it.first,
+          "Last Scanned": it.last
+        });
+      });
+    });
+    const wsBatches = XLSX.utils.json_to_sheet(batchRows);
+    wsBatches["!cols"] = [{ wch: 8 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsBatches, "Batch History");
   }
 
   const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, "-");
@@ -453,7 +549,17 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 });
 
 loadState();
-if (order.length) flashStatus(`Restored ${order.length} item(s) from your last session`);
+if (order.length) {
+  locationInput.value = batchLocation || "";
+  userInput.value = batchUser || "";
+  lockBatchInputs(true);
+  flashStatus(`Restored ${order.length} item(s) from your last session`);
+} else {
+  try {
+    locationInput.value = localStorage.getItem(LAST_LOCATION_KEY) || "";
+    userInput.value = localStorage.getItem(LAST_USER_KEY) || "";
+  } catch (err) { /* ignore */ }
+}
 renderList();
 </script>
 </body>
