@@ -14,7 +14,7 @@
     getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
   import {
-    getAuth, signInAnonymously, onAuthStateChanged
+    getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -27,16 +27,22 @@
     measurementId: "G-RYCTDZ2Y5L"
   };
 
+  const SHOP_EMAIL = "shop@laundroplus.local";
+
   const firebaseApp = initializeApp(firebaseConfig);
   window.db = getFirestore(firebaseApp);
   window.firestoreFns = { collection, addDoc, getDocs, query, orderBy, serverTimestamp };
 
   const auth = getAuth(firebaseApp);
+  window.shopAuth = {
+    signIn: (password) => signInWithEmailAndPassword(auth, SHOP_EMAIL, password),
+    signOut: () => signOut(auth)
+  };
+
   window.firebaseReady = new Promise((resolve) => {
-    onAuthStateChanged(auth, (user) => { if (user) resolve(); });
-    signInAnonymously(auth).catch((err) => {
-      console.error("Firebase sign-in failed — cloud sync will be unavailable:", err);
-      resolve();
+    onAuthStateChanged(auth, (user) => {
+      window.dispatchEvent(new CustomEvent("auth-changed", { detail: { signedIn: !!user } }));
+      if (user) resolve();
     });
   });
 </script>
@@ -183,12 +189,29 @@
 </head>
 <body>
 
+<div class="modal-overlay" id="lockScreen" style="align-items:center; z-index:200;">
+  <div class="modal-panel" style="border-radius:14px; max-width:320px; margin:0 auto;">
+    <div class="modal-header" style="justify-content:center;">
+      <h2>Enter shop password</h2>
+    </div>
+    <div class="modal-body" style="text-align:center; padding:20px 16px;">
+      <img src="logo.jpg" alt="Logo" style="width:56px; height:56px; border-radius:12px; margin-bottom:16px; box-shadow:0 1px 4px rgba(0,0,0,0.3);">
+      <input type="password" id="lockPasswordInput" placeholder="Password" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid #D5DBDB; font-size:15px; margin-bottom:10px;">
+      <button class="btn-primary" id="lockUnlockBtn" style="width:100%;">Unlock</button>
+      <div id="lockError" style="color:#E74C3C; font-size:12px; margin-top:10px; min-height:16px;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="appRoot" style="display:none;">
+
 <div class="topbar">
   <div class="brand">
     <img src="logo.jpg" alt="Logo" class="logo">
     <h1>Laundroplus Stock Scanner</h1>
   </div>
   <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+    <button id="lockBtn" style="background:transparent; color:#ECF0F1; border:1px solid #7F8C8D; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px;">Lock</button>
     <button id="historyBtn" style="background:transparent; color:#ECF0F1; border:1px solid #7F8C8D; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px;">History</button>
     <span class="badge" id="itemCount">0 items</span>
   </div>
@@ -239,6 +262,8 @@
     </div>
     <div class="modal-body" id="historyList"></div>
   </div>
+</div>
+
 </div>
 
 <script>
@@ -687,6 +712,43 @@ if (order.length) {
   } catch (err) { /* ignore */ }
 }
 renderList();
+
+const lockScreen = document.getElementById("lockScreen");
+const appRoot = document.getElementById("appRoot");
+const lockPasswordInput = document.getElementById("lockPasswordInput");
+const lockUnlockBtn = document.getElementById("lockUnlockBtn");
+const lockError = document.getElementById("lockError");
+
+window.addEventListener("auth-changed", (e) => {
+  if (e.detail.signedIn) {
+    lockScreen.style.display = "none";
+    appRoot.style.display = "block";
+  } else {
+    lockScreen.style.display = "flex";
+    appRoot.style.display = "none";
+  }
+});
+
+async function tryUnlock() {
+  const pw = lockPasswordInput.value;
+  if (!pw) return;
+  lockUnlockBtn.disabled = true;
+  lockError.textContent = "";
+  try {
+    await window.shopAuth.signIn(pw);
+    lockPasswordInput.value = "";
+  } catch (err) {
+    lockError.textContent = "Incorrect password — try again";
+  } finally {
+    lockUnlockBtn.disabled = false;
+  }
+}
+lockUnlockBtn.addEventListener("click", tryUnlock);
+lockPasswordInput.addEventListener("keydown", e => { if (e.key === "Enter") tryUnlock(); });
+
+document.getElementById("lockBtn").addEventListener("click", () => {
+  window.shopAuth.signOut();
+});
 </script>
 </body>
 </html>
