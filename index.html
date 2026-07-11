@@ -14,7 +14,8 @@
     getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
   import {
-    getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged
+    getAuth, setPersistence, browserSessionPersistence,
+    signInWithEmailAndPassword, signOut, onAuthStateChanged
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -34,6 +35,9 @@
   window.firestoreFns = { collection, addDoc, getDocs, query, orderBy, serverTimestamp };
 
   const auth = getAuth(firebaseApp);
+  setPersistence(auth, browserSessionPersistence).catch((err) => {
+    console.error("Failed to set session-only persistence:", err);
+  });
   window.shopAuth = {
     signIn: (password) => signInWithEmailAndPassword(auth, SHOP_EMAIL, password),
     signOut: () => signOut(auth)
