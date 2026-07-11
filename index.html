@@ -41,6 +41,10 @@
 
   window.firebaseReady = new Promise((resolve) => {
     onAuthStateChanged(auth, (user) => {
+      if (user && user.isAnonymous) {
+        signOut(auth);
+        return;
+      }
       window.dispatchEvent(new CustomEvent("auth-changed", { detail: { signedIn: !!user } }));
       if (user) resolve();
     });
