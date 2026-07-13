@@ -165,11 +165,11 @@
     flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #D5DBDB; font-size: 14px;
   }
   .batch-row { display: flex; gap: 8px; padding: 10px 16px 0; max-width: 480px; margin: 0 auto; }
-  .batch-row input {
+  .batch-row input, .batch-row select {
     flex: 1; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #D5DBDB;
-    font-size: 13px; background: #fff;
+    font-size: 13px; background: #fff; font-family: inherit;
   }
-  .batch-row input:disabled { background: #ECF0F1; color: #7F8C8D; }
+  .batch-row input:disabled, .batch-row select:disabled { background: #ECF0F1; color: #7F8C8D; }
   .batch-card {
     background: #fff; border: 1px solid #D5DBDB; border-radius: 10px; margin-bottom: 8px;
     padding: 10px 12px; cursor: pointer;
@@ -234,7 +234,13 @@
 </div>
 
 <div class="batch-row">
-  <input type="text" id="locationInput" placeholder="Location (e.g. Counter)">
+  <select id="locationInput">
+    <option value="" disabled selected>Select location</option>
+    <option value="Angsana">Angsana</option>
+    <option value="Washing plant">Washing plant</option>
+    <option value="Wardplace">Wardplace</option>
+    <option value="Trizen">Trizen</option>
+  </select>
   <input type="text" id="userInput" placeholder="Scanned by (your name)" disabled>
 </div>
 
