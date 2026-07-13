@@ -159,6 +159,7 @@
     font-size: 16px; padding: 0; line-height: 1;
   }
   .qty { font-size: 16px; font-weight: 700; min-width: 22px; text-align: center; }
+  .qty-remove { background: #FADBD8; color: #E74C3C; margin-left: 4px; }
   .empty-state { text-align: center; color: #95A5A6; font-size: 13px; padding: 30px 10px; }
   .manual-row { display: flex; gap: 8px; padding: 0 16px 10px; max-width: 480px; margin: 0 auto; }
   .manual-row input {
@@ -410,12 +411,15 @@ function renderList() {
         <button class="qty-btn" data-code="${escapeHtml(code)}" data-delta="-1">-</button>
         <div class="qty">${it.qty}</div>
         <button class="qty-btn" data-code="${escapeHtml(code)}" data-delta="1">+</button>
+        <button class="qty-btn qty-remove" data-code="${escapeHtml(code)}" data-action="remove" title="Remove">&times;</button>
       </div>
     </div>`;
   }).join("");
 }
 
 listBody.addEventListener("click", (e) => {
+  const removeBtn = e.target.closest(".qty-remove");
+  if (removeBtn) { removeScan(removeBtn.dataset.code); return; }
   const btn = e.target.closest(".qty-btn");
   if (!btn) return;
   changeQty(btn.dataset.code, Number(btn.dataset.delta));
@@ -430,6 +434,15 @@ function changeQty(code, delta) {
   items[code].qty = Math.max(1, items[code].qty + delta);
   renderList();
   saveState();
+}
+
+function removeScan(code) {
+  if (!items[code]) return;
+  delete items[code];
+  order = order.filter(c => c !== code);
+  renderList();
+  saveState();
+  flashStatus(`Removed: ${code}`);
 }
 
 function addScan(code) {
